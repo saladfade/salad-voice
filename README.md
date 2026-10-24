@@ -48,6 +48,13 @@ HTTP API used by the extension:
 
 ## Setup
 
+Install into your project's `.pi/extensions` (run from the project root):
+
+```bash
+mkdir -p .pi/extensions && cd .pi/extensions
+git clone https://github.com/saladfade/salad-voice.git
+```
+
 Requirements:
 
 - `alsa-utils` (`arecord`, `aplay`) for microphone and playback
