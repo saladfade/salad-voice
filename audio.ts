@@ -89,12 +89,25 @@ let playing: ChildProcess | null = null;
 let active = false;
 let stopped = false;
 
-/** Runs a player with no stdio and resolves only on exit code 0; tracked so stopPlayback() can kill it. */
-function run(cmd: string, args: string[]): Promise<void> {
+/**
+ * Runs a player with no stdio and resolves only on exit code 0; tracked so stopPlayback() can kill it.
+ * shortcut: when timeoutMs is set, the player is killed and treated as finished at that deadline, because
+ * a player can stay alive after its audio has drained; upgrade by finding out why aplay does not exit.
+ */
+function run(cmd: string, args: string[], timeoutMs?: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { stdio: "ignore" });
     playing = proc;
+    const timer =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            done();
+            proc.kill("SIGKILL");
+            resolve();
+          }, timeoutMs);
     const done = () => {
+      clearTimeout(timer);
       if (playing === proc) playing = null;
     };
     proc.on("error", (e) => {
@@ -109,17 +122,17 @@ function run(cmd: string, args: string[]): Promise<void> {
   });
 }
 
-/** Plays a WAV file with aplay, falling back to paplay on any failure. Resolves false if stopped. */
-export async function play(file: string): Promise<boolean> {
+/** Plays a WAV file with aplay, falling back to paplay on any failure. Resolves false if stopped; timeoutMs ends it early. */
+export async function play(file: string, timeoutMs?: number): Promise<boolean> {
   if (stopped) return false;
   try {
-    await run("aplay", [file]);
+    await run("aplay", [file], timeoutMs);
     return true;
   } catch {
     if (stopped) return false;
   }
   try {
-    await run("paplay", [file]);
+    await run("paplay", [file], timeoutMs);
     return true;
   } catch (e) {
     if (stopped) return false;

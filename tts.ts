@@ -64,7 +64,10 @@ export async function playWav(wav: Buffer): Promise<boolean> {
   try {
     const file = path.join(dir, "speech.wav");
     await writeFile(file, wav);
-    return await play(file);
+    // Deadline from the WAV header: audio length plus 2 s grace, so playback ends even if the player hangs.
+    const byteRate = wav.readUInt32LE(28);
+    const dataBytes = Math.min(wav.readUInt32LE(40), wav.length - 44);
+    return await play(file, byteRate ? (dataBytes / byteRate) * 1000 + 2000 : undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
