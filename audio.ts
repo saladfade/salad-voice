@@ -75,51 +75,21 @@ export class Recorder {
   }
 }
 
-/**
- * Plays a WAV file with aplay (ALSA), falling back to paplay (PulseAudio)
- * if aplayer is unavailable.
- */
-export class Player {
-  private proc: ChildProcess | null = null;
-  onEnd: ((err: string | null) => void) | null = null;
+/** Runs a command with no stdio and resolves only on exit code 0. */
+function run(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: "ignore" });
+    proc.on("error", reject);
+    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited with ${code}`))));
+  });
+}
 
-  get playing(): boolean {
-    return this.proc !== null;
-  }
-
-  start(file: string): void {
-    this.stop();
-    this.spawn("aplay", file);
-  }
-
-  private spawn(cmd: string, file: string): void {
-    let proc: ChildProcess;
-    try {
-      proc = spawn(cmd, [file], { stdio: "ignore" });
-    } catch (e) {
-      this.onEnd?.(e instanceof Error ? e.message : String(e));
-      return;
-    }
-    this.proc = proc;
-    proc.on("close", (code) => {
-      this.proc = null;
-      this.onEnd?.(code === 0 ? null : `${cmd} exited with code ${code}`);
-    });
-    proc.on("error", (e: Error) => {
-      this.proc = null;
-      if (cmd === "aplay") {
-        // aplayer missing/unusable → try paplay
-        this.spawn("paplay", file);
-      } else {
-        this.onEnd?.(e.message);
-      }
-    });
-  }
-
-  stop(): void {
-    const p = this.proc;
-    this.proc = null;
-    if (p && !p.killed) p.kill("SIGTERM");
+/** Plays a WAV file with aplay, falling back to paplay on any failure. */
+export async function play(file: string): Promise<void> {
+  try {
+    await run("aplay", [file]);
+  } catch {
+    await run("paplay", [file]);
   }
 }
 
