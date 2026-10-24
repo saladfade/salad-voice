@@ -1,104 +1,108 @@
 # salad-voice
 
-Fully local voice for the Pi coding agent: microphone dictation (STT),
-text-to-speech (TTS), and voice cloning — no cloud, no native Node modules.
+Fully local voice for the Pi coding agent: microphone dictation (speech-to-text),
+text-to-speech with Kokoro, and voice cloning with Qwen3-TTS. All models run on CPU
+inside one Docker container built from [audio.cpp](https://github.com/0xShug0/audio.cpp).
+No cloud calls and no native Node modules.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| ``/voice`` | Record microphone (Enter = transcribe, Esc = cancel) → whisper.cpp → sent as a user message |
-| ``/voice tts <text>`` | Synthesize with Qwen3-TTS (llama-tts) and play it back |
-| ``/voice stop`` | Stop current playback |
-| ``/voice status`` | Show whisper server / TTS model / binary status |
-| ``/voice clone-record`` | Record a 10-second voice sample for cloning (stored in `~/.pi/voice-clone.wav`) |
-| ``/voice clone-play <text>`` | Speak `text` using your cloned voice |
+| `/voice` | Record from the microphone (Enter = transcribe, Esc = cancel) and paste the transcript into the editor |
+| `/voice tts <text>` | Speak `text` with the stock Kokoro voice (`af_heart`) and play it |
+| `/voice clone-record` | Record a 10-second voice sample to `~/.pi/voice-clone.wav`, transcribed to `~/.pi/voice-clone.txt` |
+| `/voice clone-play <text>` | Speak `text` in your cloned voice (Qwen3-TTS) |
+| `/voice clone` | Show whether the clone sample and transcript exist |
+| `/voice status` | Show container state, health and loaded models |
+| `/voice stop` | Stop playback and stop the container |
 
-## Requirements
+The container starts on first use. The first start builds the image and downloads the models (slow).
 
-- ``alsa-utils`` (arecord, aplay) — installed
-- Docker for the whisper and TTS servers
-- ``~/llama.cpp/bin/llama-tts`` — optional local TTS fallback
+## Architecture
 
-## 1. Build & run the whisper server (STT)
+```
+Pi extension (index.ts, audio.ts, stt.ts, tts.ts)
+  - arecord / aplay for audio capture and playback
+  - HTTP to 127.0.0.1:8082 and docker CLI for start/stop/status
+        |
+        v
+Docker container "salad-audiocpp" (image salad-audiocpp:latest)
+  - audiocpp_server, CPU backend, 4 CPUs, 6 GiB memory limit
+  - Parakeet-TDT 0.6B v3 (ASR), Kokoro 82M (TTS), Qwen3-TTS 0.6B Base (voice-clone TTS)
+  - at most 2 models resident at once (--max-loaded-models 2)
+  - /models  <-  named volume "salad-audiocpp-models"
+```
+
+HTTP API used by the extension:
+
+- `GET /health`, `GET /v1/models`
+- `POST /v1/audio/transcriptions` (multipart `file`, `model=parakeet-tdt`)
+- `POST /v1/audio/speech` (`model=kokoro` or `model=qwen3-tts`; voice clone sent inline as base64 `voice_ref`)
+
+### Container files
+
+- `docker/Dockerfile`: two-stage build. Compiles `audiocpp_server` from a pinned audio.cpp commit (`AUDIOCPP_REF`) and runs it on Ubuntu 24.04 as user `ubuntu`. Models are not baked in.
+- `docker/entrypoint.sh`: downloads the three pinned GGUF models into `/models` if missing, checks each file's sha256 against the expected value, then starts the server with `--max-loaded-models 2`.
+- `docker/server.json`: server config (port 8082, CPU backend, lazy loading, model list).
+
+## Setup
+
+Requirements:
+
+- `alsa-utils` (`arecord`, `aplay`) for microphone and playback
+- Docker, with your user in the `docker` group (`sudo usermod -aG docker $USER`, then log in again)
+- Disk: about 3 GB for the models in the volume, plus the image
+
+Then start Pi with this extension loaded and run `/voice status`. To build and start the
+container by hand instead:
 
 ```bash
-sudo docker build -t salad-whisper .pi/extensions/salad-voice/docker
-sudo docker run --rm -p 8081:8081 salad-whisper
+docker build -t salad-audiocpp:latest .pi/extensions/salad-voice/docker
+docker run -d --name salad-audiocpp --restart unless-stopped --cpus 4 --memory 6g \
+  -p 127.0.0.1:8082:8082 -v salad-audiocpp-models:/models salad-audiocpp:latest
+curl http://127.0.0.1:8082/health
 ```
 
-(`sudo` needed until you're in the `docker` group: `sudo usermod -aG docker $USER`, then re-login.)
+Port 8082 is bound to localhost only.
 
-The server loads `base.en` (~142 MB) at startup and serves
-`POST /inference` (multipart `file`) and `GET /health` on port 8081.
+## Models
 
-Better accuracy: edit the model URL in `docker/Dockerfile` to
-`ggml-small.en.bin` (~244 MB) and rebuild.
+| File in `/models` | Role | sha256 |
+|---|---|---|
+| `Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-q8_0.gguf` | speech-to-text | `074e61ac…dde64c` |
+| `Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf` | stock-voice TTS | `5d800fd2…512d1d0` |
+| `Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf` | voice-clone TTS | `771420bd…520855d` |
 
-## 2. Build & run the TTS server (audio.cpp)
+All three come from `huggingface.co/audio-cpp/audio.cpp-gguf` at revision `406756ee`. The full
+hashes are in `docker/entrypoint.sh`.
 
-```bash
-cd .pi/extensions/salad-voice/docker
-sudo docker build -f Dockerfile.tts -t salad-tts .
-sudo docker run --rm -p 8082:8080 salad-tts
-```
+## Voice cloning
 
-The image bakes in the Qwen3-TTS 1.7B Base GGUF (audio.cpp format, ~1.1 GB,
-downloaded at build time) and the default voice reference (`voice/b.wav`).
-The server serves `POST /v1/audio/speech` and `GET /health` on port 8082.
+1. Run `/voice clone-record` and speak clearly for 10 seconds.
+2. Run `/voice clone-play hello, this is my voice` to speak in that voice.
 
-Voice cloning works without staging files: the extension sends the recorded
-sample inline as base64 `voice_ref`.
-
-### Local fallback
-
-If the TTS server is not running, `tts.ts` falls back to the local
-`llama-tts` binary (auto-detected: `SALAD_LLAMA_TTS` → known install
-locations → PATH), forced to CPU via `CUDA_VISIBLE_DEVICES=99` (the GPU is
-usually occupied by Pi's own LLM). First run downloads
-`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF` (~1.7 GB) into the Hugging Face
-cache.
-
-Override with `SALAD_TTS_MODEL` (HF repo id or local `.gguf` path — the
-`mmproj` next to a local backbone is picked up automatically).
-If a TTS entry appears in `~/.pi/agent/models-store.json` or
-`llamacpp-infra-models.json`, it is picked up automatically.
-
-Note: Qwen3-TTS can repeat the phrase in the generated audio (a ~5 s
-phrase came out as ~12 s in testing), so transcripts may contain the
-repetition too.
-
-## 3. Voice cloning
-
-Record your voice sample (speak clearly for 10 seconds):
-
-```
-/voice clone-record
-```
-
-Then use it to speak any text in your voice:
-
-```
-/voice clone-play hello, this is my voice
-```
-
-The cloned sample is stored at `~/.pi/voice-clone.wav`.
+The sample stays on disk in `~/.pi/voice-clone.wav`; the transcript is in `~/.pi/voice-clone.txt`.
 
 ## Environment variables
 
-| Var | Default | Purpose |
-|---|---|---|
-| ``SALAD_WHISPER_URL`` | ``http://127.0.0.1:8081`` | whisper server base URL |
-| ``SALAD_TTS_URL`` | ``http://127.0.0.1:8082`` | audio.cpp TTS server base URL |
-| ``SALAD_LLAMA_TTS`` | ``~/llama.cpp/bin/llama-tts`` | llama-tts fallback binary |
-| ``SALAD_TTS_MODEL`` | ``ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF`` | TTS model |
+None. The extension and the container read no environment variables. Container limits
+and the model cap are set in the `docker run` flags used by `stt.ts` (`--cpus 4 --memory 6g`)
+and in `docker/entrypoint.sh` (`--max-loaded-models 2`).
+
+## Troubleshooting
+
+- **"Docker not available"**: start the Docker daemon, and check that your user can run `docker info` without sudo.
+- **"container not healthy after 10 min"**: run `docker logs salad-audiocpp`. A slow first-time model download is the usual cause; run `/voice status` again once it finishes.
+- **"sha256 mismatch for ..."** in the logs: the download was corrupt or the file is not the pinned revision. Remove that file from the volume (`docker exec salad-audiocpp rm -f /models/<path>`), then start the container again.
+- **"voice clone incomplete"**: run `/voice clone-record` to create the sample and transcript.
+- **Out of memory**: the container is capped at 6 GiB. Peak measured RAM is about 2.5 GiB with Kokoro and Parakeet requests.
+- **No audio captured**: check that `arecord` works from the shell and that the microphone is the default ALSA device.
 
 ## Files
 
-- ``index.ts`` — ``/voice`` command + TUI overlays (RecordingComponent, SpeakingComponent, CloneRecordComponent)
-- ``audio.ts`` — arecord capture, aplayer playback, WAV header builder
-- ``stt.ts`` — whisper server HTTP client
-- ``tts.ts`` — audio.cpp server client + llama-tts fallback (voice cloning via inline base64 `voice_ref` / `--tts-speaker-file`)
-- ``docker/Dockerfile`` — whisper.cpp server image
-- ``docker/Dockerfile.tts`` + ``docker/server.json`` — audio.cpp TTS server image
-- ``voice/b.wav`` — default voice reference (baked into the TTS image)
+- `index.ts`: `/voice` command and TUI components (recording, speaking, clone recording)
+- `audio.ts`: `arecord` capture, `aplay`/`paplay` playback, WAV header builder
+- `stt.ts`: container start/stop/status and the transcription client
+- `tts.ts`: Kokoro and Qwen3-TTS requests, clone files in `~/.pi`
+- `docker/`: container image, entrypoint and server config
