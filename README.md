@@ -55,10 +55,10 @@ Requirements:
 - Disk: about 3 GB for the models in the volume, plus the image
 
 Then start Pi with this extension loaded and run `/voice status`. To build and start the
-container by hand instead, from the repo root (the directory containing this README):
+container by hand instead:
 
 ```bash
-docker build -t salad-audiocpp:latest docker
+docker build -t salad-audiocpp:latest .pi/extensions/salad-voice/docker
 docker run -d --name salad-audiocpp --restart unless-stopped --cpus 4 --memory 6g \
   -p 127.0.0.1:8082:8082 -v salad-audiocpp-models:/models salad-audiocpp:latest
 curl http://127.0.0.1:8082/health
