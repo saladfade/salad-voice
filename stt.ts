@@ -58,6 +58,7 @@ export async function containerState(): Promise<string> {
 /** Starts the container (building the image or creating it if needed) and waits for /health. */
 export async function ensureRunning(onStatus: (msg: string) => void): Promise<void> {
   if (await health()) return;
+  if (!(await dockerOk(["info"]))) throw new Error("Docker not available: install it or start the daemon");
   const state = await containerState();
   if (state === "not created") {
     if (!(await dockerOk(["image", "inspect", IMAGE]))) {

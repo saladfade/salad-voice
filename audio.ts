@@ -7,45 +7,53 @@ import { spawn, type ChildProcess } from "node:child_process";
 export class Recorder {
   private proc: ChildProcess | null = null;
   private chunks: Buffer[] = [];
+  private stderr = "";
   failed: Error | null = null;
 
   start(): void {
     this.chunks = [];
+    this.stderr = "";
     this.failed = null;
-    this.proc = spawn(
+    const proc = spawn(
       "arecord",
       ["-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
-    this.proc.stdout.on("data", (d: Buffer) => this.chunks.push(d));
-    // Drain stderr so the pipe never backs up.
-    this.proc.stderr.on("data", () => {});
-    this.proc.on("error", (e: Error) => {
+    this.proc = proc;
+    proc.stdout.on("data", (d: Buffer) => this.chunks.push(d));
+    proc.stderr.on("data", (d: Buffer) => (this.stderr += d));
+    proc.on("error", (e: Error) => {
       this.failed = e;
+      this.proc = null;
+    });
+    // Exit before stop() was called (stop() clears this.proc first) means arecord failed.
+    proc.on("close", (code) => {
+      if (this.proc !== proc || code === 0) return;
+      this.failed = new Error(this.stderr.trim() || `arecord exited with ${code}`);
       this.proc = null;
     });
   }
 
-  /** Resolves true once audio is flowing (or the recorder failed). */
+  /** Resolves true once audio is flowing; false if arecord fails or exits first. */
   waitReady(timeoutMs = 2000): Promise<boolean> {
     if (this.failed) return Promise.resolve(false);
     if (this.chunks.length > 0) return Promise.resolve(true);
     return new Promise((resolve) => {
-      const t = setTimeout(() => resolve(!this.failed), timeoutMs);
       const proc = this.proc;
       if (!proc) {
-        clearTimeout(t);
         resolve(false);
         return;
       }
-      proc.stdout.once("data", () => {
+      const finish = (ok: boolean) => {
         clearTimeout(t);
-        resolve(true);
-      });
+        resolve(ok && !this.failed);
+      };
+      const t = setTimeout(() => finish(true), timeoutMs);
+      proc.stdout.once("data", () => finish(true));
+      proc.once("close", () => finish(false));
       proc.once("error", (e: Error) => {
         this.failed = e;
-        clearTimeout(t);
-        resolve(false);
+        finish(false);
       });
     });
   }

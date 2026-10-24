@@ -38,14 +38,17 @@ export default function (pi: ExtensionAPI) {
     }
 
     const recorder = new Recorder();
+    let pcm: Buffer | null = null;
     recorder.start();
-    const ready = await recorder.waitReady();
-    if (!ready) {
-      ctx.ui.setStatus("voice", `Microphone unavailable: ${recorder.failed?.message ?? "no audio captured"}`);
-      return;
+    try {
+      if (!(await recorder.waitReady())) {
+        ctx.ui.setStatus("voice", `Microphone unavailable: ${recorder.failed?.message ?? "no audio captured"}`);
+        return;
+      }
+      pcm = await ctx.ui.custom<Buffer | null>((_tui, theme, _keybindings, done) => new RecordingComponent(theme, recorder, done));
+    } finally {
+      await recorder.stop(); // no-op once stopped; kills arecord if the UI threw
     }
-
-    const pcm = await ctx.ui.custom<Buffer | null>((_tui, theme, _keybindings, done) => new RecordingComponent(theme, recorder, done));
     if (!pcm) {
       ctx.ui.setStatus("voice", "Dictation cancelled.");
       return;
