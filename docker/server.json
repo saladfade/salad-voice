@@ -1,19 +1,27 @@
 {
   "host": "0.0.0.0",
-  "port": 8080,
-  "threads": 1,
+  "port": 8082,
+  "backend": "cpu",
+  "threads": 4,
   "lazy_load": true,
   "models": [
     {
+      "id": "parakeet-tdt",
+      "family": "parakeet_tdt",
+      "path": "/models/Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-q8_0.gguf",
+      "task": "asr"
+    },
+    {
+      "id": "kokoro",
+      "family": "kokoro_tts",
+      "path": "/models/Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
+      "task": "tts"
+    },
+    {
       "id": "qwen3-tts",
       "family": "qwen3_tts",
-      "path": "/models/Qwen3-TTS-12Hz-1.7B-Base-GGUF/qwen3-tts-12hz-1.7b-base-q8_0_v2.gguf",
-      "task": "tts",
-      "mode": "offline",
-      "default_voice_preset": {
-        "voice_ref": "/voices/b.wav",
-        "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than that."
-      }
+      "path": "/models/Qwen3-TTS-12Hz-0.6B-Base-GGUF/qwen3-tts-12hz-0.6b-base-q8_0.gguf",
+      "task": "tts"
     }
   ]
 }
