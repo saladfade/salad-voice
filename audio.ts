@@ -96,7 +96,9 @@ let stopped = false;
  */
 function run(cmd: string, args: string[], timeoutMs?: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: "ignore" });
+    const proc = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => (stderr += d)); // drained so the pipe never blocks the player
     playing = proc;
     const timer =
       timeoutMs === undefined
@@ -117,7 +119,8 @@ function run(cmd: string, args: string[], timeoutMs?: number): Promise<void> {
     proc.on("close", (code) => {
       done();
       if (code === 0) resolve();
-      else reject(new Error(`${cmd} exited with ${code}`));
+      // aplay prints "Playing WAVE" only after the device opened, so a later failure means audio already played.
+      else reject(Object.assign(new Error(`${cmd} exited with ${code}`), { started: stderr.includes("Playing") }));
     });
   });
 }
@@ -128,8 +131,9 @@ export async function play(file: string, timeoutMs?: number): Promise<boolean> {
   try {
     await run("aplay", [file], timeoutMs);
     return true;
-  } catch {
+  } catch (e) {
     if (stopped) return false;
+    if ((e as { started?: boolean }).started) throw e; // audio already played: never replay it through paplay
   }
   try {
     await run("paplay", [file], timeoutMs);
