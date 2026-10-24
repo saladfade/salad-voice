@@ -91,7 +91,7 @@ export async function stopContainer(): Promise<void> {
 /** POSTs a WAV buffer to /v1/audio/transcriptions and returns the transcript text. */
 export async function transcribe(wav: Buffer): Promise<string> {
   const form = new FormData();
-  form.append("file", new Blob([wav], { type: "audio/wav" }), "recording.wav");
+  form.append("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "recording.wav");
   form.append("model", MODEL);
   const res = await fetch(BASE + "/v1/audio/transcriptions", { method: "POST", body: form });
   if (!res.ok) throw new Error(`transcription failed: ${res.status}`);

@@ -1,11 +1,12 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 
 /**
  * Records raw 16 kHz mono S16LE PCM from the default ALSA input device
  * using arecord (alsa-utils). No native modules — plain pipes.
  */
 export class Recorder {
-  private proc: ChildProcess | null = null;
+  private proc: ChildProcessByStdio<null, Readable, Readable> | null = null;
   private chunks: Buffer[] = [];
   private stderr = "";
   failed: Error | null = null;
@@ -14,10 +15,11 @@ export class Recorder {
     this.chunks = [];
     this.stderr = "";
     this.failed = null;
-    const proc = spawn(
+    const stdio: ["ignore", "pipe", "pipe"] = ["ignore", "pipe", "pipe"];
+    const proc: ChildProcessByStdio<null, Readable, Readable> = spawn(
       "arecord",
       ["-D", "default", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw"],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      { stdio },
     );
     this.proc = proc;
     proc.stdout.on("data", (d: Buffer) => this.chunks.push(d));
@@ -84,6 +86,7 @@ export class Recorder {
 }
 
 let playing: ChildProcess | null = null;
+let active = false;
 let stopped = false;
 
 /** Runs a player with no stdio and resolves only on exit code 0; tracked so stopPlayback() can kill it. */
@@ -108,7 +111,7 @@ function run(cmd: string, args: string[]): Promise<void> {
 
 /** Plays a WAV file with aplay, falling back to paplay on any failure. Resolves false if stopped. */
 export async function play(file: string): Promise<boolean> {
-  stopped = false;
+  if (stopped) return false;
   try {
     await run("aplay", [file]);
     return true;
@@ -124,9 +127,24 @@ export async function play(file: string): Promise<boolean> {
   }
 }
 
+/** Opens a playback session: a stop from here until endPlayback() sticks, even before any player runs. */
+export function beginPlayback(): void {
+  active = true;
+  stopped = false;
+}
+
+export function endPlayback(): void {
+  active = false;
+  stopped = false;
+}
+
+export function wasStopped(): boolean {
+  return stopped;
+}
+
 /** Kills the current playback and suppresses the paplay fallback. */
 export function stopPlayback(): void {
-  stopped = true;
+  if (active) stopped = true;
   playing?.kill("SIGTERM");
 }
 

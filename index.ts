@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type Component } from "@earendil-works/pi-tui";
-import { Recorder, buildWav, stopPlayback } from "./audio.js";
+import { Recorder, beginPlayback, buildWav, endPlayback, stopPlayback, wasStopped } from "./audio.js";
 import { CLONE_TXT, CLONE_WAV, cloneMissing, playWav, saveClone, speakClone, speakTts } from "./tts.js";
 import { containerState, ensureRunning, health, loadedModels, stopContainer, transcribe } from "./stt.js";
 
@@ -123,7 +123,7 @@ export default function (pi: ExtensionAPI) {
     const wav = missing.includes(CLONE_WAV) ? "missing" : "present";
     const txt = missing.includes(CLONE_TXT) ? "missing" : "present";
     const ok = await health();
-    const model = !ok ? "container not reachable" : (await loadedModels().catch(() => [])).includes("qwen3-tts") ? "loaded" : "not loaded (loads on first use)";
+    const model = !ok ? "container not reachable" : (await loadedModels().catch((): string[] => [])).includes("qwen3-tts") ? "loaded" : "not loaded (loads on first use)";
     setStatus(ctx, `Voice clone: sample ${wav} · transcript ${txt} · qwen3-tts ${model}`);
   }
 
@@ -144,28 +144,28 @@ export default function (pi: ExtensionAPI) {
     setStatus(ctx, `Container: ${state} · Health: ${ok ? "ok" : "not reachable"} · Models: ${loaded}`);
   }
 
-  /** Synthesizes with the container and plays the result; Esc during playback stops it. */
+  /** Synthesizes with the container and plays the result; Esc or /voice stop during either phase stops it. */
   async function speak(ctx: ExtensionCommandContext, label: string, synth: () => Promise<Buffer>): Promise<void> {
+    beginPlayback();
+    const unsubscribe = ctx.ui.onTerminalInput((data) => {
+      if (!matchesKey(data, "escape")) return undefined;
+      stopPlayback();
+      setStatus(ctx, "Playback stopped.");
+      return { consume: true };
+    });
     try {
       await ensureRunning((msg) => setStatus(ctx, msg));
+      if (wasStopped()) return;
       setStatus(ctx, "Synthesizing…");
       const wav = await synth();
-      const unsubscribe = ctx.ui.onTerminalInput((data) => {
-        if (!matchesKey(data, "escape")) return undefined;
-        stopPlayback();
-        setStatus(ctx, "Playback stopped.");
-        return { consume: true };
-      });
-      let completed: boolean;
-      try {
-        setStatus(ctx, "Playing… (Esc = stop)");
-        completed = await playWav(wav);
-      } finally {
-        unsubscribe();
-      }
-      if (completed) setStatus(ctx, "Playback finished.");
+      if (wasStopped()) return;
+      setStatus(ctx, "Playing… (Esc = stop)");
+      if (await playWav(wav)) setStatus(ctx, "Playback finished.");
     } catch (e) {
       setStatus(ctx, `${label} failed: ${errMsg(e)}`);
+    } finally {
+      unsubscribe();
+      endPlayback();
     }
   }
 }
