@@ -61,7 +61,7 @@ export class Recorder {
   /** Elapsed recording time in ms, derived from captured bytes. */
   get durationMs(): number {
     const bytes = this.chunks.reduce((n, c) => n + c.length, 0);
-    return Math.floor((bytes / 32) * 1000);
+    return Math.floor(bytes / 32); // 32 bytes per ms at 16 kHz mono S16LE
   }
 
   /** Stops arecord and returns the captured PCM, or null if nothing was captured. */
@@ -83,22 +83,51 @@ export class Recorder {
   }
 }
 
-/** Runs a command with no stdio and resolves only on exit code 0. */
+let playing: ChildProcess | null = null;
+let stopped = false;
+
+/** Runs a player with no stdio and resolves only on exit code 0; tracked so stopPlayback() can kill it. */
 function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { stdio: "ignore" });
-    proc.on("error", reject);
-    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited with ${code}`))));
+    playing = proc;
+    const done = () => {
+      if (playing === proc) playing = null;
+    };
+    proc.on("error", (e) => {
+      done();
+      reject(e);
+    });
+    proc.on("close", (code) => {
+      done();
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} exited with ${code}`));
+    });
   });
 }
 
-/** Plays a WAV file with aplay, falling back to paplay on any failure. */
-export async function play(file: string): Promise<void> {
+/** Plays a WAV file with aplay, falling back to paplay on any failure. Resolves false if stopped. */
+export async function play(file: string): Promise<boolean> {
+  stopped = false;
   try {
     await run("aplay", [file]);
+    return true;
   } catch {
-    await run("paplay", [file]);
+    if (stopped) return false;
   }
+  try {
+    await run("paplay", [file]);
+    return true;
+  } catch (e) {
+    if (stopped) return false;
+    throw e;
+  }
+}
+
+/** Kills the current playback and suppresses the paplay fallback. */
+export function stopPlayback(): void {
+  stopped = true;
+  playing?.kill("SIGTERM");
 }
 
 /** Wraps raw S16LE mono PCM in a 44-byte RIFF/WAVE header. */

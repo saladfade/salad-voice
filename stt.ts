@@ -8,7 +8,7 @@ import { promisify } from "node:util";
  * plus start/stop/status through the docker CLI.
  */
 const exec = promisify(execFile);
-const BASE = "http://127.0.0.1:8082";
+export const BASE = "http://127.0.0.1:8082";
 const NAME = "salad-audiocpp";
 const IMAGE = "salad-audiocpp:latest";
 const MODEL = "parakeet-tdt";
